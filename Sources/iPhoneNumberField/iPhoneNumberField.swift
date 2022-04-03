@@ -146,6 +146,11 @@ public struct iPhoneNumberField: UIViewRepresentable {
         return uiView
     }
 
+    private func internationalPrefix(for uiView: PhoneNumberTextField) -> String? {
+        guard let countryCode = uiView.phoneNumberKit.countryCode(for: uiView.currentRegion)?.description else { return nil }
+        return "+" + countryCode
+    }
+    
     public func updateUIView(_ uiView: PhoneNumberTextField, context: UIViewRepresentableContext<Self>) {
         configuration(uiView)
         uiView.textContentType = .telephoneNumber //allow auto-fill to work with telephone text field
@@ -159,16 +164,24 @@ public struct iPhoneNumberField: UIViewRepresentable {
         uiView.withFlag = showFlag
         uiView.withDefaultPickerUI = selectableFlag
         uiView.withPrefix = previewPrefix
+        
+        if autofillPrefix && displayedText.isEmpty && !context.coordinator.workaroundInProgress {
+            // Workaround touch autofill issue
+            DispatchQueue.main.async {
+                context.coordinator.workaroundInProgress = true
+                displayedText = internationalPrefix(for: uiView) ?? ""
+                text = displayedText
+                uiView.text = displayedText
+
+                context.coordinator.workaroundInProgress = false
+            }
+        }
         if placeholder != nil {
             uiView.placeholder = placeholder
         } else {
             uiView.withExamplePlaceholder = autofillPrefix
         }
-        if autofillPrefix && displayedText.isEmpty && isFirstResponder { 
-            // Workaround touch autofill issue
-            uiView.resignFirstResponder() 
-            context.coordinator.changedFirstResponder = false // pass through guard below
-        } 
+        
         uiView.tintColor = accentColor
         
         if let defaultRegion = defaultRegion {
@@ -184,6 +197,8 @@ public struct iPhoneNumberField: UIViewRepresentable {
             uiView.textAlignment = textAlignment
         }
 		
+        guard !context.coordinator.workaroundInProgress else { return }
+
         defer { context.coordinator.changedFirstResponder = false }
         guard !context.coordinator.changedFirstResponder || setInitialFirstResponder else { return }
 
@@ -250,6 +265,7 @@ public struct iPhoneNumberField: UIViewRepresentable {
         var onReturn = { (view: PhoneNumberTextField) in }
         
         var changedFirstResponder = false
+        var workaroundInProgress = false
 
         @objc public func textViewDidChange(_ textField: UITextField) {
             guard let textField = textField as? PhoneNumberTextField else {
@@ -272,18 +288,21 @@ public struct iPhoneNumberField: UIViewRepresentable {
                 }
             }
             
+            guard !workaroundInProgress else { return }
             displayedText.wrappedValue = textField.text ?? ""
             onEditingChange(textField)
             onPhoneNumberChange(textField.phoneNumber)
         }
 
         public func textFieldDidBeginEditing(_ textField: UITextField) {
+            guard !workaroundInProgress else { return }
             isFirstResponder.wrappedValue = true
             changedFirstResponder = true
             onBeginEditing(textField as! PhoneNumberTextField)
         }
 
         public func textFieldDidEndEditing(_ textField: UITextField) {
+	    guard !workaroundInProgress else { return }
             isFirstResponder.wrappedValue = false
             changedFirstResponder = true
             onEndEditing(textField as! PhoneNumberTextField)
