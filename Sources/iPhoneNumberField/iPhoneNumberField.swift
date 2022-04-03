@@ -21,26 +21,10 @@ public struct iPhoneNumberField: UIViewRepresentable {
     @Binding public var text: String
     @State private var displayedText: String
     
-    /// Whether or not the phone number field is editing.
-    /// This variable is `nil` unless the user passes in an `isEditing` binding.
-    private var externalIsFirstResponder: Binding<Bool>?
-
-    /// Whether or not the phone number field is editing.
-    /// This variable is used only if an `isEditing` binding was not provided in the initializer.
-    @State private var internalIsFirstResponder: Bool = false
-
     /// Whether or not the phone number field is editing. 💬
     /// This variable uses `externalIsFirstResponder` binding variable if an `isEditing` binding was provided in the initializer, otherwise it uses the `internalIsFirstResponder` state variable.
-    private var isFirstResponder: Bool {
-        get { externalIsFirstResponder?.wrappedValue ?? internalIsFirstResponder }
-        set {
-            if externalIsFirstResponder != nil {
-                externalIsFirstResponder!.wrappedValue = newValue
-            } else {
-                internalIsFirstResponder = newValue
-            }
-        }
-    }
+    @Binding public var isFirstResponder: Bool
+    @State private var setInitialFirstResponder = true
 
     /// The maximum number of digits the phone number field allows. 🔢
     internal var maxDigits: Int?
@@ -134,12 +118,12 @@ public struct iPhoneNumberField: UIViewRepresentable {
 
     public init(_ title: String? = nil,
                 text: Binding<String>,
-                isEditing: Binding<Bool>? = nil,
+                isEditing: Binding<Bool>,
                 formatted: Bool = true,
                 configuration: @escaping (UIViewType) -> () = { _ in } ) {
 
         self.placeholder = title
-        self.externalIsFirstResponder = isEditing
+        self._isFirstResponder = isEditing
         self.formatted = formatted
         self._text = text
         self._displayedText = State(initialValue: text.wrappedValue)
@@ -180,7 +164,11 @@ public struct iPhoneNumberField: UIViewRepresentable {
         } else {
             uiView.withExamplePlaceholder = autofillPrefix
         }
-        if autofillPrefix && displayedText.isEmpty && isFirstResponder { uiView.resignFirstResponder() } // Workaround touch autofill issue
+        if autofillPrefix && displayedText.isEmpty && isFirstResponder { 
+            // Workaround touch autofill issue
+            uiView.resignFirstResponder() 
+            context.coordinator.changedFirstResponder = false // pass through guard below
+        } 
         uiView.tintColor = accentColor
         
         if let defaultRegion = defaultRegion {
@@ -195,11 +183,18 @@ public struct iPhoneNumberField: UIViewRepresentable {
         if let textAlignment = textAlignment {
             uiView.textAlignment = textAlignment
         }
+		
+        defer { context.coordinator.changedFirstResponder = false }
+        guard !context.coordinator.changedFirstResponder || setInitialFirstResponder else { return }
 
         if isFirstResponder {
             uiView.becomeFirstResponder()
         } else {
             uiView.resignFirstResponder()
+        }
+        
+        DispatchQueue.main.async {
+            setInitialFirstResponder = false
         }
     }
 
@@ -207,7 +202,7 @@ public struct iPhoneNumberField: UIViewRepresentable {
         Coordinator(
             text: $text,
                     displayedText: $displayedText,
-                    isFirstResponder: externalIsFirstResponder ?? $internalIsFirstResponder,
+                    isFirstResponder: $isFirstResponder,
                     formatted: formatted,
                     onBeginEditing: onBeginEditingHandler,
                     onEditingChange: onEditingChangeHandler,
@@ -253,6 +248,8 @@ public struct iPhoneNumberField: UIViewRepresentable {
         var onEndEditing = { (view: PhoneNumberTextField) in }
         var onClear = { (view: PhoneNumberTextField) in }
         var onReturn = { (view: PhoneNumberTextField) in }
+        
+        var changedFirstResponder = false
 
         @objc public func textViewDidChange(_ textField: UITextField) {
             guard let textField = textField as? PhoneNumberTextField else {
@@ -282,11 +279,13 @@ public struct iPhoneNumberField: UIViewRepresentable {
 
         public func textFieldDidBeginEditing(_ textField: UITextField) {
             isFirstResponder.wrappedValue = true
+            changedFirstResponder = true
             onBeginEditing(textField as! PhoneNumberTextField)
         }
 
         public func textFieldDidEndEditing(_ textField: UITextField) {
             isFirstResponder.wrappedValue = false
+            changedFirstResponder = true
             onEndEditing(textField as! PhoneNumberTextField)
         }
         
